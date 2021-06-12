@@ -36,7 +36,7 @@ function download(url, dest) {
   const cmd = (libs) => `<plugin>
   <groupId>org.apache.maven.plugins</groupId>
   <artifactId>maven-install-plugin</artifactId>
-  <version>2.4</version/>
+  <version>2.4</version>
   <executions>
   ${libs
     .map(
