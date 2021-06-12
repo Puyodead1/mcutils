@@ -1,9 +1,8 @@
 const fetch = require("node-fetch").default;
-const childProcess = require("child_process");
 const path = require("path");
 const fs = require("fs");
-const http = require("http");
-const { mkdir } = require("fs/promises");
+const { mkdir, unlink } = require("fs/promises");
+const sha1File = require("sha1-file");
 
 const manifestUrl =
   "https://launchermeta.mojang.com/v1/packages/44fa141917df947ed5a138f5cfe667a34f7bbaca/1.17.json";
@@ -34,6 +33,32 @@ function download(url, dest) {
 }
 
 (async () => {
+  const cmd = (libs) => `<plugin>
+  <groupId>org.apache.maven.plugins</groupId>
+  <artifactId>maven-install-plugin</artifactId>
+  <version>2.4</version/>
+  <executions>
+  ${libs
+    .map(
+      (x) =>
+        `<execution>
+      <id>install ${x.name}</id>
+      <phase>package</phase>
+      <goals>
+        <goal>install-file</goal>
+      </goals>
+      <configuration>
+        <file>${x.path}</file>
+        <groupId>${x.group}</groupId>
+        <artifactId>${x.artifact}</artifactId>
+        <version>${x.version}</version>
+      </configuration>
+    </execution>`
+    )
+    .join("\n")}
+  </executions>
+  </plugin>`;
+  const libs = [];
   const libsFolder = path.join(__dirname, "libs");
   if (!fs.existsSync(libsFolder)) await mkdir(libsFolder);
   function canUseLib(rules) {
@@ -56,21 +81,35 @@ function download(url, dest) {
     const url = artifact.url;
     const filename = url.split("/").pop();
     const filepath = path.join(libsFolder, filename);
+    const sha1 = artifact.sha1;
+    const filesha = await sha1File(filepath);
     if (fs.existsSync(filepath)) {
-      console.log(filename + " exists, skipping");
-      continue;
+      console.log(`${filename} exists, verifying hash...`);
+      if (sha1 === filesha) {
+        console.log("file integrity verified");
+      } else {
+        console.error("File failed integrity verification, will redownload");
+        await unlink(filepath);
+        await download(url, filepath).catch(console.error);
+        console.log("Download complete");
+      }
+    } else {
+      await download(url, filepath).catch(console.error);
+      console.log("download complete");
     }
-    await download(url, filepath).catch(console.error);
     const split = name.split(":");
     const groupID = split[0];
     const artifactID = split[1];
     const version = split[2];
 
-    const child = childProcess.exec(
-      `mvn install:install-file -Dfile=${filepath} -DgroupId=${groupID} -DartifactId=${artifactID} -Dversion=${version} -Dpackaging=jar -DgeneratePom=true`
-    );
-    child.on("error", console.error);
-    child.stderr.on("data", (chunk) => console.error(chunk.toString()));
-    child.stdout.on("data", (chunk) => console.log(chunk.toString()));
+    libs.push({
+      name: filename,
+      path: filepath,
+      group: groupID,
+      artifact: artifactID,
+      version,
+    });
   }
+
+  console.log(cmd(libs));
 })();
